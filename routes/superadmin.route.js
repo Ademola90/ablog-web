@@ -1,21 +1,12 @@
-//routes/superadmin.route.js
 import express from "express";
-import { jwtDecode } from "../middlewares/jwtDecode.js";
-import { verifyRole } from "../middlewares/roleMiddleware.js";
-import { createSuperadmin } from "../controllers/superAdminController.js";
-import { validateCreateSuperadmin } from "../middlewares/validation.js";
-import { handleValidationErrors } from "../middlewares/errorHandle.js";
+import { createSuperadmin, loginSuperadmin, verifySuperadminLogin } from "../controllers/superAdminController.js";
+
 
 const router = express.Router();
 
-router
-    .route("/create-superadmin")
-    .post(
-        jwtDecode,
-        verifyRole(["superadmin"]),
-        validateCreateSuperadmin,
-        handleValidationErrors,
-        createSuperadmin
-    );
+// Super Admin Routes
+router.post("/create-super-admin", createSuperadmin);
+router.post("/login-super-admin", loginSuperadmin);
+router.post("/verify-super-admin-login", verifySuperadminLogin);
 
 export default router;

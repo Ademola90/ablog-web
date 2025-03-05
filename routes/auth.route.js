@@ -1,21 +1,22 @@
-//routes/auth.route.js
-
 import express from "express";
 import {
-    authLogin,
-    sendVerificationOTP,
-    verifyEmail,
-    resendVerificationOTP,
+    signup,
+    verifyOTP,
+    resendOTP,
+    login,
+    forgotPassword,
+    resetPassword,
 } from "../controllers/authController.js";
-// import { validateLogin } from "../middlewares/Validation.js";
-import { handleValidationErrors } from "../middlewares/errorHandle.js";
-import { validateLogin } from "../middlewares/validation.js";
+import { signupValidation } from "../validation/validation.js";
 
 const router = express.Router();
 
-router.route("/login").post(validateLogin, handleValidationErrors, authLogin);
-router.route("/verify/send").post(sendVerificationOTP);
-router.route("/verify").post(verifyEmail);
-router.route("/verify/resend").post(resendVerificationOTP);
+// Auth Routes
+router.post("/signup", signupValidation, signup);
+router.post("/verify-otp", verifyOTP);
+router.post("/resend-otp", resendOTP);
+router.post("/login", login);
+router.post("/forgot-password", forgotPassword);
+router.post("/reset-password", resetPassword);
 
 export default router;

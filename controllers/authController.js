@@ -1,223 +1,200 @@
-import User from "../models/user.js";
 import bcrypt from "bcrypt";
-import { generateToken } from "../utils/token.js";
-import { sendEmail } from "../utils/email.js";
-import { generateOTP, saveOTP, validateOTP } from "../utils/otp.js";
-import { sendError, sendResponse } from "../utils/response.js";
+import { validationResult } from "express-validator";
+import { StatusCodes } from "http-status-codes";
+import jwt from "jsonwebtoken";
+import { sendOTPEmail } from "../utils/email.js";
+import { createToken, verifyToken } from "../utils/token.js";
+import { User } from "../models/user.js";
 
-// 1. Signup
+// Signup a new user
 export const signup = async (req, res) => {
+    const errors = validationResult(req);
+    if (!errors.isEmpty()) {
+        return res.status(StatusCodes.BAD_REQUEST).json({ errors: errors.array() });
+    }
+
+    const { firstName, lastName, email, password } = req.body;
+
     try {
-        const { email, password, role } = req.body;
-
-        if (!email || !password || !role) {
-            return sendError(res, 400, "Email, password, and role are required");
-        }
-
-        const existingUser = await User.findOne({ email: email.toLowerCase() });
+        // Check if the user already exists
+        const existingUser = await User.findOne({ email });
         if (existingUser) {
-            return sendError(res, 400, "Email already in use");
+            return res.status(StatusCodes.CONFLICT).json({ message: "User already exists." });
         }
 
-        const hashedPassword = await bcrypt.hash(password, 10);
+        console.log("Password before hashing:", password); // Debugging
 
-        const newUser = await User.create({
-            email: email.toLowerCase(),
-            password: hashedPassword,
-            role,
-        });
+        // Create a new user (let the schema handle password hashing)
+        const newUser = new User({ firstName, lastName, email, password });
 
-        const token = generateToken(newUser);
+        // Save the user
+        await newUser.save();
 
-        sendResponse(res, 201, "Signup successful", { token });
+        console.log("User saved successfully. Generating OTP...");
+
+        // Generate and save an OTP
+        const tokenResponse = await createToken(newUser._id, "verifyEmail", 1);
+        if (!tokenResponse.status) {
+            console.error("Error generating OTP:", tokenResponse.message);
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Error generating OTP." });
+        }
+
+        console.log("OTP generated successfully. Sending email...");
+
+        // Send the OTP via email
+        const emailResponse = await sendOTPEmail(email, tokenResponse.data);
+        if (!emailResponse.status) {
+            console.error("Error sending OTP email:", emailResponse.message);
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Error sending OTP email." });
+        }
+
+        console.log("OTP email sent successfully.");
+
+        return res.status(StatusCodes.CREATED).json({ message: "Signup successful. Please verify your email." });
     } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
-
-// 2. Login
-export const login = async (req, res) => {
-    try {
-        const { email, password } = req.body;
-
-        if (!email || !password) {
-            return sendError(res, 400, "Email and password are required");
-        }
-
-        const user = await User.findOne({ email: email.toLowerCase() });
-        if (!user) {
-            return sendError(res, 401, "Invalid credentials");
-        }
-
-        const isPasswordValid = await bcrypt.compare(password, user.password);
-        if (!isPasswordValid) {
-            return sendError(res, 401, "Invalid credentials");
-        }
-
-        const token = generateToken(user);
-
-        sendResponse(res, 200, "Login successful", { token });
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
-
-// 3. Send OTP
-export const sendVerificationOTP = async (req, res) => {
-    try {
-        const { email } = req.body;
-
-        if (!email) {
-            return sendError(res, 400, "Email is required");
-        }
-
-        const user = await User.findOne({ email: email.toLowerCase() });
-        if (!user) {
-            return sendError(res, 404, "User not found");
-        }
-
-        const otp = generateOTP();
-        await saveOTP(email, otp);
-
-        await sendEmail(email, "Verification OTP", `Your OTP is: ${otp}`);
-
-        sendResponse(res, 200, "OTP sent successfully");
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
-
-// 4. Verify OTP
-export const verifyEmail = async (req, res) => {
-    try {
-        const { email, otp } = req.body;
-
-        if (!email || !otp) {
-            return sendError(res, 400, "Email and OTP are required");
-        }
-
-        const isValid = await validateOTP(email, otp);
-        if (!isValid) {
-            return sendError(res, 400, "Invalid or expired OTP");
-        }
-
-        await User.findOneAndUpdate({ email: email.toLowerCase() }, { isVerified: true });
-
-        sendResponse(res, 200, "Email verified successfully");
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
-
-// 5. Resend OTP
-export const resendVerificationOTP = async (req, res) => {
-    try {
-        const { email } = req.body;
-
-        if (!email) {
-            return sendError(res, 400, "Email is required");
-        }
-
-        const user = await User.findOne({ email: email.toLowerCase() });
-        if (!user) {
-            return sendError(res, 404, "User not found");
-        }
-
-        const otp = generateOTP();
-        await saveOTP(email, otp);
-
-        await sendEmail(email, "Verification OTP", `Your new OTP is: ${otp}`);
-
-        sendResponse(res, 200, "OTP resent successfully");
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
-
-// 6. Delete User
-export const deleteUser = async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        const user = await User.findByIdAndDelete(id);
-        if (!user) {
-            return sendError(res, 404, "User not found");
-        }
-
-        sendResponse(res, 200, "User deleted successfully");
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
-
-// 7. Update User
-export const updateUser = async (req, res) => {
-    try {
-        const { id } = req.params;
-        const updates = req.body;
-
-        if (updates.password) {
-            updates.password = await bcrypt.hash(updates.password, 10);
-        }
-
-        const updatedUser = await User.findByIdAndUpdate(id, updates, { new: true });
-        if (!updatedUser) {
-            return sendError(res, 404, "User not found");
-        }
-
-        sendResponse(res, 200, "User updated successfully", updatedUser);
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
-
-// 8. Get Users
-export const getAllUsers = async (req, res) => {
-    try {
-        const users = await User.find();
-        sendResponse(res, 200, "Users retrieved successfully", users);
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
-
-export const getUser = async (req, res) => {
-    try {
-        const { id } = req.params;
-
-        const user = await User.findById(id);
-        if (!user) {
-            return sendError(res, 404, "User not found");
-        }
-
-        sendResponse(res, 200, "User retrieved successfully", user);
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
+        console.error("Signup failed:", error.message);
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Signup failed.", error: error.message });
     }
 };
 
 
-export const authLogin = async (req, res) => {
-    try {
-        const { email, password } = req.body;
 
+
+// Verify OTP
+export const verifyOTP = async (req, res) => {
+    const { email, otp } = req.body;
+
+    try {
+        // Verify the OTP
+        const tokenResponse = await verifyToken(otp, email, "verifyEmail");
+
+        if (!tokenResponse.status) {
+            return res.status(StatusCodes.UNAUTHORIZED).json({ message: tokenResponse.message });
+        }
+
+        // Mark the user as verified
+        const user = tokenResponse.data;
+        user.isVerified = true;
+        await user.save();
+
+        res.status(StatusCodes.OK).json({ message: "Email verified successfully." });
+    } catch (error) {
+        console.error("OTP verification failed:", error.message);
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "OTP verification failed.", error: error.message });
+    }
+};
+
+// Resend OTP
+export const resendOTP = async (req, res) => {
+    const { email } = req.body;
+
+    try {
+        // Find the user
         const user = await User.findOne({ email });
-
         if (!user) {
-            return sendError(res, 404, "User not found");
+            return res.status(StatusCodes.NOT_FOUND).json({ message: "User not found." });
         }
 
-        // Validate the password (use bcrypt if hashed passwords are implemented)
-        const isPasswordValid = await user.comparePassword(password); // Assuming you have this method in your model
-        if (!isPasswordValid) {
-            return sendError(res, 401, "Invalid credentials");
+        // Generate and send a new OTP
+        const tokenResponse = await createToken(user._id, "verifyEmail", 1);
+        if (tokenResponse.status) {
+            await sendOTPEmail(email, tokenResponse.data);
+            return res.status(StatusCodes.OK).json({ message: "OTP resent successfully." });
+        } else {
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Error generating OTP." });
         }
-
-        // Generate token
-        const token = generateToken(user);
-
-        sendResponse(res, 200, "Login successful", { token });
     } catch (error) {
-        sendError(res, 500, "Internal Server Error");
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Failed to resend OTP.", error: error.message });
+    }
+};
+
+// Login
+export const login = async (req, res) => {
+    const { email, password } = req.body;
+
+    try {
+        // Find the user by email
+        const user = await User.findOne({ email });
+        if (!user) {
+            console.error("User not found for email:", email);
+            return res.status(StatusCodes.UNAUTHORIZED).json({ message: "Invalid credentials." });
+        }
+
+        console.log("User found:", user);
+
+        // Compare the provided password with the stored hashed password
+        const isPasswordValid = await bcrypt.compare(password, user.password);
+        console.log("Password comparison result:", isPasswordValid);
+
+        if (!isPasswordValid) {
+            console.error("Invalid password for email:", email);
+            return res.status(StatusCodes.UNAUTHORIZED).json({ message: "Invalid credentials." });
+        }
+
+        // Check if the user is verified
+        if (!user.isVerified) {
+            return res.status(StatusCodes.UNAUTHORIZED).json({ message: "Please verify your email first." });
+        }
+
+        // Generate a JWT token
+        const token = jwt.sign({ id: user._id, role: user.role }, process.env.JWT_SECRET, { expiresIn: "1h" });
+        res.status(StatusCodes.OK).json({ message: "Login successful.", token });
+    } catch (error) {
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Login failed.", error: error.message });
+    }
+};
+
+// Forgot Password
+export const forgotPassword = async (req, res) => {
+    const { email } = req.body;
+
+    try {
+        // Find the user
+        const user = await User.findOne({ email });
+        if (!user) {
+            return res.status(StatusCodes.NOT_FOUND).json({ message: "User not found." });
+        }
+
+        // Generate and send a password reset OTP
+        const tokenResponse = await createToken(user._id, "resetPassword", 1);
+        if (tokenResponse.status) {
+            await sendOTPEmail(email, tokenResponse.data);
+            return res.status(StatusCodes.OK).json({ message: "Password reset OTP sent." });
+        } else {
+            return res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Error generating OTP." });
+        }
+    } catch (error) {
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Failed to send OTP.", error: error.message });
+    }
+};
+
+// Reset Password
+export const resetPassword = async (req, res) => {
+    const { email, otp, newPassword } = req.body;
+
+    try {
+        // Verify the OTP
+        const tokenResponse = await verifyToken(otp, email, "resetPassword");
+        if (!tokenResponse.status) {
+            return res.status(StatusCodes.UNAUTHORIZED).json({ message: tokenResponse.message });
+        }
+
+        // Update the user's password
+        const user = tokenResponse.data;
+        const hashedPassword = await bcrypt.hash(newPassword, 10);
+        user.password = hashedPassword;
+        await user.save();
+
+        // Delete the OTP token
+        await Token.deleteOne({ token: otp, type: "resetPassword" });
+
+        res.status(StatusCodes.OK).json({
+            message: "Password reset successfully. You can now log in with the new password.",
+        });
+    } catch (error) {
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({
+            message: "Failed to reset password",
+            error: error.message,
+        });
     }
 };

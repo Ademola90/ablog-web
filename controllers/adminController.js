@@ -1,84 +1,71 @@
-import Admin from "../models/admin.js";
-import { sendError, sendResponse } from "../utils/response.js";
-import { generateToken } from "../utils/token.js";
+// import User from "../models/User.js";
+import bcrypt from "bcrypt";
+import { StatusCodes } from "http-status-codes";
+import { User } from "../models/user.js";
+import jwt from "jsonwebtoken";
 
 export const createAdmin = async (req, res) => {
-    try {
-        const { email, password, role } = req.body;
+    const { firstName, lastName, email, password } = req.body;
 
-        if (!email || !password || !role) {
-            return sendError(res, 400, "Email, password, and role are required");
+    try {
+        // Ensure only super admin can create admin accounts
+        if (req.user.role !== "superadmin") {
+            return res.status(StatusCodes.FORBIDDEN).json({ message: "Only super admin can create admin accounts." });
         }
 
-        const newAdmin = await Admin.create({
-            email: email.toLowerCase(),
-            password,
-            role,
+        // Check if the email is already in use
+        const existingUser = await User.findOne({ email });
+        if (existingUser) {
+            return res.status(StatusCodes.CONFLICT).json({ message: "Email already in use." });
+        }
+
+        // Create the admin account (password will be hashed by the schema's pre-save middleware)
+        const newAdmin = new User({
+            firstName,
+            lastName,
+            email,
+            password, // Pass the plain password here
+            role: "admin",
+            emailVerified: true,
+            createdBy: req.user.userId, // Track who created this admin
         });
 
-        // Generate token
-        const token = generateToken(newAdmin);
-
-        sendResponse(res, 201, "Admin created successfully", {
-            admin: newAdmin,
-            token,
-        });
+        await newAdmin.save(); // The middleware will hash the password here
+        res.status(StatusCodes.CREATED).json({ message: "Admin account created successfully." });
     } catch (error) {
-        sendError(res, 500, "Internal Server Error");
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Error creating admin account.", error: error.message });
     }
 };
 
-export const getAllAdmins = async (req, res) => {
-    try {
-        const admins = await Admin.find();
-        sendResponse(res, 200, "Admins retrieved successfully", admins);
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
+export const loginAdmin = async (req, res) => {
+    const { email, password } = req.body;
 
-export const getAdmin = async (req, res) => {
     try {
-        const admin = await Admin.findById(req.params.id);
-
+        // Find the admin by email and role
+        const admin = await User.findOne({ email, role: "admin" });
         if (!admin) {
-            return sendError(res, 404, "Admin not found");
+            return res.status(StatusCodes.NOT_FOUND).json({ message: "Admin not found." });
         }
 
-        sendResponse(res, 200, "Admin retrieved successfully", admin);
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
+        // Compare the provided password with the hashed password
+        const isPasswordValid = await bcrypt.compare(password, admin.password);
+        if (!isPasswordValid) {
+            return res.status(StatusCodes.UNAUTHORIZED).json({ message: "Invalid credentials." });
+        }
 
-export const updateAdmin = async (req, res) => {
-    try {
-        const updatedAdmin = await Admin.findByIdAndUpdate(
-            req.params.id,
-            req.body,
-            { new: true }
+        // Generate a JWT token for the admin
+        const token = jwt.sign(
+            { userId: admin._id, role: admin.role }, // Payload
+            process.env.JWT_SECRET, // Secret key
+            { expiresIn: "1h" } // Token expiry time
         );
 
-        if (!updatedAdmin) {
-            return sendError(res, 404, "Admin not found");
-        }
-
-        sendResponse(res, 200, "Admin updated successfully", updatedAdmin);
+        // Return the token in the response
+        res.status(StatusCodes.OK).json({
+            message: "Login successful.",
+            token: token, // This is the JWT token
+        });
     } catch (error) {
-        sendError(res, 500, "Internal Server Error");
-    }
-};
-
-export const deleteAdmin = async (req, res) => {
-    try {
-        const admin = await Admin.findByIdAndDelete(req.params.id);
-
-        if (!admin) {
-            return sendError(res, 404, "Admin not found");
-        }
-
-        sendResponse(res, 200, "Admin deleted successfully", admin);
-    } catch (error) {
-        sendError(res, 500, "Internal Server Error");
+        res.status(StatusCodes.INTERNAL_SERVER_ERROR).json({ message: "Error during login.", error: error.message });
     }
 };

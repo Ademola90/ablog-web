@@ -1,13 +1,13 @@
-//routes/index.js
 import express from "express";
-import adminRoutes from "../routes/admin.route.js";
-import authRoutes from "../routes/auth.route.js";
-import superAdminRoutes from "../routes/superadmin.route.js";
+import authRoutes from "./auth.route.js";
+import adminRoutes from "./admin.route.js";
+import superAdminRoutes from "./superadmin.route.js";
 
 const router = express.Router();
 
-router.use("/admin", adminRoutes);
+// Use all routes
 router.use("/auth", authRoutes);
+router.use("/admin", adminRoutes);
 router.use("/superadmin", superAdminRoutes);
 
 export default router;
